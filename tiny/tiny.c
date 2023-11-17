@@ -16,12 +16,17 @@ void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
+void sigchld_handler(int signal);
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+
+    if (Signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
+        unix_error("Failed to set sigchld handler");
+    }
 
     /* Check command line args */
     if (argc != 2) {
@@ -187,12 +192,18 @@ void serve_dynamic(int fd, char *filename, char *cgiargs) {
     Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Server: Tiny Web Server\r\n");
     Rio_writen(fd, buf, strlen(buf));
-
+    
     if (Fork() == 0) {
         setenv("QUERY_STRING", cgiargs, 1);
         Dup2(fd, STDOUT_FILENO);
         Execve(filename, emptylist, environ);
     }
-    
-    Wait(NULL);
+}
+
+void sigchld_handler(int signal) {
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        fprintf(stderr, "[%d]child process exit\n", pid);
+    }
 }
