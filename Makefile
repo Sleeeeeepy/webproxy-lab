@@ -10,6 +10,20 @@ LDFLAGS = -lpthread
 
 all: proxy
 
+echoclient.o: echoclient.c csapp.c csapp.h
+	$(CC) $(CFLAGS) -c $^
+
+echoserveri.o: echoserveri.c csapp.c csapp.h
+	$(CC) $(CFLAGS) -c $^
+
+echoclient: echoclient.o csapp.o 
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+echoserveri: echoserveri.o csapp.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+echo: echoclient echoserveri
+
 csapp.o: csapp.c csapp.h
 	$(CC) $(CFLAGS) -c csapp.c
 
@@ -26,4 +40,6 @@ handin:
 
 clean:
 	rm -f *~ *.o proxy core *.tar *.zip *.gzip *.bzip *.gz
+	rm -f echoclient echoserveri
+	rm -f *.gch
 
