@@ -8,15 +8,23 @@
  */
 #include "csapp.h"
 
+typedef enum {
+    UNKOWN = 0,
+    GET = 1,
+    HEAD = 2
+} http_method_t;
+
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, http_method_t method);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
-                 char *longmsg);
+                 char *longmsg, http_method_t method);
 void sigchld_handler(int signal);
+void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
+void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
@@ -47,9 +55,55 @@ int main(int argc, char **argv) {
     }
 }
 
-void doit(int fd) {
-    int is_static;
+void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs) {
     struct stat sbuf;
+    read_requesthdrs(rio);
+    int is_static = parse_uri(uri, filename, cgiargs);
+    if (stat(filename, &sbuf) < 0) {
+        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file", GET);
+        return;
+    }
+
+    if (is_static) {
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", GET);
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size, GET);
+    } else {
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", GET);
+            return;
+        }
+        serve_dynamic(fd, filename, cgiargs, GET);
+    }
+}
+
+void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs) {
+    struct stat sbuf;
+    read_requesthdrs(rio);
+    int is_static = parse_uri(uri, filename, cgiargs);
+    if (stat(filename, &sbuf) < 0) {
+        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file", HEAD);
+        return;
+    }
+
+    if (is_static) {
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", HEAD);
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size, HEAD);
+    } else {
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", HEAD);
+            return;
+        }
+        serve_dynamic(fd, filename, cgiargs, HEAD);
+    }
+}
+
+void doit(int fd) {
     char buf[MAXLINE] = {0};
     char method[MAXLINE] = {0};
     char uri[MAXLINE] = {0};
@@ -62,46 +116,36 @@ void doit(int fd) {
     Rio_readlineb(&rio, buf, MAXLINE);
     printf("Request headers:\n%s\n", buf);
     sscanf(buf, "%s %s %s", method, uri, version);
-    if (strncasecmp(method, "GET", 4) != 0) {
-        clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");
+    if (strncasecmp(method, "GET", 4) == 0) {
+        handle_get(fd, &rio, uri, filename, cgiargs); 
         return;
-    }
-    
-    read_requesthdrs(&rio);
-    is_static = parse_uri(uri, filename, cgiargs);
-    if (stat(filename, &sbuf) < 0) {
-        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file");
+    } else if (strncasecmp(method, "HEAD", 5) == 0) {
+        handle_head(fd, &rio, uri, filename, cgiargs);
         return;
     }
 
-    if (is_static) {
-        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file");
-            return;
-        }
-        serve_static(fd, filename, sbuf.st_size);
-    } else {
-        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
-            return;
-        }
-        serve_dynamic(fd, filename, cgiargs);
-    }
+    clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method", UNKOWN);   
 }
 
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg, http_method_t method) {
     char buf[MAXLINE], body[MAXBUF];
+
+    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-type: text/html\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    
+    if (method == HEAD) {
+        sprintf(buf, "\r\n");
+        Rio_writen(fd, buf, strlen(buf));
+        return;
+    }
 
     sprintf(body, "<html><title>Tiny Error</title>");
     sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
     sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
     sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
     sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
-
-    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    Rio_writen(fd, buf, strlen(buf));
-    sprintf(buf, "Content-type: text/html\r\n");
-    Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
     Rio_writen(fd, buf, strlen(buf));
     Rio_writen(fd, body, strlen(body));
@@ -145,16 +189,23 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
     return 0;
 }
 
-void serve_static(int fd, char *filename, int filesize) {
+void serve_static(int fd, char *filename, int filesize, http_method_t method) {
     int srcfd;
-    char *srcp, filetype[MAXLINE], buf[MAXLINE];
+    char *srcp, buf[MAXLINE];
+    char filetype[MAXLINE];
 
     get_filetype(filename, filetype);
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
     sprintf(buf, "%sConnection: close\r\n", buf);
-    sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
-    sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+    sprintf(buf, "%sContent-type: %s\r\n", buf, filetype);
+    if (method == HEAD) {
+        sprintf(buf, "%s\r\n", buf);
+        Rio_writen(fd, buf, strlen(buf));
+        return;
+    }
+
+    sprintf(buf, "%sContent-length: %d\r\n\r\n", buf, filesize);
     Rio_writen(fd, buf, strlen(buf));
     printf("Response headers:\n");
     printf("%s", buf);
@@ -185,16 +236,25 @@ void get_filetype(char *filename, char *filetype) {
     }
 }
 
-void serve_dynamic(int fd, char *filename, char *cgiargs) {
+void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method) {
     char buf[MAXLINE], *emptylist[] = { NULL };
-
+    // char method_buf[100];
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Server: Tiny Web Server\r\n");
     Rio_writen(fd, buf, strlen(buf));
-    
+
+    // TODO: HEAD 메소드를 사용하면 cgi까지 실행이 되어야 합니다.
+    if (method == HEAD) {
+        sprintf(buf, "\r\n");
+        Rio_writen(fd, buf, strlen(buf));
+        return;
+    }
+
     if (Fork() == 0) {
+        // sprintf(method_buf, "%d", method);
         setenv("QUERY_STRING", cgiargs, 1);
+        // setenv("METHOD", method_buf, 1);
         Dup2(fd, STDOUT_FILENO);
         Execve(filename, emptylist, environ);
     }
