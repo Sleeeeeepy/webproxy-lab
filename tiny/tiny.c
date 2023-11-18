@@ -23,8 +23,10 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg, http_method_t method);
 void sigchld_handler(int signal);
+void sigpipe_handler(int signal);
 void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
 void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
+void rio_writen__(int fd, char *buf, size_t n);
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
@@ -32,14 +34,18 @@ int main(int argc, char **argv) {
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
 
-    if (Signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
-        unix_error("Failed to set sigchld handler");
-    }
-
     /* Check command line args */
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
+    }
+
+    if (Signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
+        unix_error("Failed to set sigchld handler");
+    }
+
+    if (Signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
+        unix_error("Failed to set sigpipe handler");
     }
 
     listenfd = Open_listenfd(argv[1]);
@@ -131,13 +137,13 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
     char buf[MAXLINE], body[MAXBUF];
 
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    Rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     sprintf(buf, "Content-type: text/html\r\n");
-    Rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     
     if (method == HEAD) {
         sprintf(buf, "\r\n");
-        Rio_writen(fd, buf, strlen(buf));
+        rio_writen__(fd, buf, strlen(buf));
         return;
     }
 
@@ -147,8 +153,8 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
     sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
     sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-    Rio_writen(fd, buf, strlen(buf));
-    Rio_writen(fd, body, strlen(body));
+    rio_writen__(fd, buf, strlen(buf));
+    rio_writen__(fd, body, strlen(body));
 }
 
 void read_requesthdrs(rio_t *rp) {
@@ -191,8 +197,9 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
 
 void serve_static(int fd, char *filename, int filesize, http_method_t method) {
     int srcfd;
-    char *srcp, buf[MAXLINE];
-    char filetype[MAXLINE];
+    char *srcp;
+    char buf[MAXLINE] = {0};
+    char filetype[MAXLINE] = {0};
 
     get_filetype(filename, filetype);
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
@@ -201,21 +208,23 @@ void serve_static(int fd, char *filename, int filesize, http_method_t method) {
     sprintf(buf, "%sContent-type: %s\r\n", buf, filetype);
     if (method == HEAD) {
         sprintf(buf, "%s\r\n", buf);
-        Rio_writen(fd, buf, strlen(buf));
+        rio_writen__(fd, buf, strlen(buf));
         return;
     }
 
     sprintf(buf, "%sContent-length: %d\r\n\r\n", buf, filesize);
-    Rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     printf("Response headers:\n");
     printf("%s", buf);
 
     srcfd = Open(filename, O_RDONLY, 0);
     srcp = (char *)Malloc(filesize);
+    memset(srcp, 0x00, filesize);
     Rio_readn(srcfd, srcp, filesize);
     Close(srcfd);
-    Rio_writen(fd, srcp, filesize);
-    printf("Response Body:\n%s\n", srcp);
+    rio_writen__(fd, srcp, filesize);
+    rio_writen__(STDOUT_FILENO, srcp, filesize);
+    free(srcp);
 }
 
 void get_filetype(char *filename, char *filetype) {
@@ -240,18 +249,21 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method) 
     char buf[MAXLINE], *emptylist[] = { NULL };
     // char method_buf[100];
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
-    Rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     sprintf(buf, "Server: Tiny Web Server\r\n");
-    Rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
 
     // TODO: HEAD 메소드를 사용하면 cgi까지 실행이 되어야 합니다.
     if (method == HEAD) {
         sprintf(buf, "\r\n");
-        Rio_writen(fd, buf, strlen(buf));
+        rio_writen__(fd, buf, strlen(buf));
         return;
     }
 
     if (Fork() == 0) {
+        if (Signal(SIGPIPE, SIG_DFL) == SIG_ERR) {
+            unix_error("Failed to reset SIGEPIPE handler");
+        }
         // sprintf(method_buf, "%d", method);
         setenv("QUERY_STRING", cgiargs, 1);
         // setenv("METHOD", method_buf, 1);
@@ -266,4 +278,20 @@ void sigchld_handler(int signal) {
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         fprintf(stderr, "[%d]child process exit\n", pid);
     }
+}
+
+void sigpipe_handler(int signal) {
+    fprintf(stderr, "EPIE error ocurred.\n");
+}
+
+void rio_writen__(int fd, char *buf, size_t n) {
+    if (rio_writen(fd, buf, n) == n) {
+        return;
+    }
+
+    if (errno == EPIPE) {
+        return;
+    }
+
+    unix_error("rio_writen error");
 }
