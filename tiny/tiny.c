@@ -6,6 +6,7 @@
  * Updated 11/2019 droh
  *   - Fixed sprintf() aliasing issue in serve_static(), and clienterror().
  */
+#include <time.h>
 #include "csapp.h"
 
 typedef enum {
@@ -17,7 +18,7 @@ typedef enum {
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize, http_method_t method);
+void serve_static(int fd, char *filename, struct stat *sbuf, http_method_t method);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
@@ -27,6 +28,7 @@ void sigpipe_handler(int signal);
 void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
 void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
 void rio_writen__(int fd, char *buf, size_t n);
+int endsWith(const char *str, const char *suffix);
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
@@ -75,7 +77,7 @@ void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs) {
             clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", GET);
             return;
         }
-        serve_static(fd, filename, sbuf.st_size, GET);
+        serve_static(fd, filename, &sbuf, GET);
     } else {
         if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
             clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", GET);
@@ -159,6 +161,10 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
 
 void read_requesthdrs(rio_t *rp) {
     char buf[MAXLINE];
+    if (!endsWith(buf, "\r\n\r\n")) {
+        printf("invlid header!\n");
+        return;
+    }
 
     Rio_readlineb(rp, buf, MAXLINE);
     while (strcmp(buf, "\r\n")) {
@@ -195,17 +201,20 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
     return 0;
 }
 
-void serve_static(int fd, char *filename, int filesize, http_method_t method) {
+void serve_static(int fd, char *filename, struct stat *sbuf, http_method_t method) {
     int srcfd;
     char *srcp;
     char buf[MAXLINE] = {0};
     char filetype[MAXLINE] = {0};
-
+    int filesize = sbuf->st_size;
+    char time_buf[100];
+    strftime(time_buf, sizeof(time_buf), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&(sbuf->st_mtime)));
     get_filetype(filename, filetype);
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
     sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-type: %s\r\n", buf, filetype);
+    sprintf(buf, "%sLast-Modified: %s\r\n", buf, time_buf);
     if (method == HEAD) {
         sprintf(buf, "%s\r\n", buf);
         rio_writen__(fd, buf, strlen(buf));
@@ -223,7 +232,7 @@ void serve_static(int fd, char *filename, int filesize, http_method_t method) {
     Rio_readn(srcfd, srcp, filesize);
     Close(srcfd);
     rio_writen__(fd, srcp, filesize);
-    rio_writen__(STDOUT_FILENO, srcp, filesize);
+    //rio_writen__(STDOUT_FILENO, srcp, filesize);
     free(srcp);
 }
 
@@ -294,4 +303,15 @@ void rio_writen__(int fd, char *buf, size_t n) {
     }
 
     unix_error("rio_writen error");
+}
+
+int endsWith(const char *str, const char *suffix) {
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+
+    if (str_len < suffix_len) {
+        return 0;
+    }
+
+    return strncmp(str + (str_len - suffix_len), suffix, suffix_len) == 0;
 }
