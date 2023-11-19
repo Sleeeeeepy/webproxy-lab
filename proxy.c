@@ -48,7 +48,7 @@ static void make_req_hdr(char* buf, size_t n, URL url) {
     snprintf(buf, n, "%s\r\n", buf);
 }
 
-result_t parse_url(const char* url, URL* parsedURL) {
+static result_t parse_url(const char* url, URL* parsedURL) {
     char *token, *rest;
     memset(parsedURL, 0x00, sizeof(*parsedURL));
     result_t result;
@@ -107,7 +107,10 @@ result_t parse_url(const char* url, URL* parsedURL) {
         free(host_copy);
     }
 
-    // TODO: Parse path to prevent directory traversal
+    // prevent directory traversal
+    if (strstr(parsedURL->path, "../") != NULL || strstr(parsedURL->path, "//") != NULL) {
+        result.succ = false;
+    }
 
     result.has_data = (result.data != NULL);
     free(url_copy);
