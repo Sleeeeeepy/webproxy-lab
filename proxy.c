@@ -13,7 +13,7 @@
 #define MAX_CACHE_SIZE  1049000
 #define MAX_OBJECT_SIZE 102400
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
-
+#define HTTP_VER_STRING "HTTP/1.0"
 
 /* You won't lose style points for including this long line in your code */
 static const char* user_agent_hdr =
@@ -25,11 +25,15 @@ int main(int argc, char** argv) {
     struct sockaddr_storage client_addr, listen_addr;
     socklen_t client_len;
     char host[MAXLINE], port[MAXLINE];
-    URL url;
-    parse_url("/winter.mp4", &url);
+
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
+    }
+    
+    
+    if (Signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
+        unix_error("Failed to set sigpipe handler");
     }
     
     listen_fd = Open_listenfd(argv[1]);
@@ -51,6 +55,9 @@ static void handle_request(int fd) {
     char url_buf[MAXLINE];
     targs_t args;
     rio_t rio;
+    bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false;
+    size_t host_len;
+    
     rio_readinitb(&rio, fd);
     if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
         log_error("Error", "Failed to read data from %d\n", fd);
@@ -58,8 +65,74 @@ static void handle_request(int fd) {
     }
 
     sscanf(buf, "%s %s %s", args.request.method, url_buf, args.request.ver);
+    result_t parse_result = parse_url(url_buf, &(args.request.url));
+    if (!parse_result.succ) {
+        return;
+    }
     
     args.fd = fd;
+    strcpy(args.request.ver, HTTP_VER_STRING);
+    host_len = strnlen(args.request.url.host, sizeof(args.request.url.host));
+
+    // TODO: read timeout with epoll
+    while (rio_readlineb(&rio, buf, sizeof(buf)) > 0) {
+        if (strstr(buf, "\r\n") == NULL) {
+            log_warn("HEADER", "Invalid header\n");
+            break;
+        }
+
+        if (strstr(buf, "Host") != NULL) {
+            if (host_len == 0) {
+                log_warn("WARN", "host_len is zero.\n");
+                strncat(args.request.header, "Host: http://127.0.0.1:8081", sizeof(args.request.header));
+                strcpy(args.request.url.proto, "http");
+                strcpy(args.request.url.host, "localhost");
+                args.request.url.port = 8081;
+                continue;
+            }
+            strncatf(args.request.header, sizeof(args.request.header), "Host: %s\r\n", args.request.url.host);
+            has_hosthdr = true;
+            log_info("HEADER", "%s", buf);
+            continue;
+        }
+
+        if (strstr(buf, "Connection") != NULL) {
+            strncatf(args.request.header, sizeof(args.request.header), "Connection: close\r\n");
+            has_connhdr = true;
+            log_info("HEADER", "%s", buf);
+            continue;
+        }
+
+        if (strstr(buf, "Proxy-Connection") != NULL) {
+            strncatf(args.request.header, sizeof(args.request.header), "Proxy-Connection: close\r\n");
+            has_pconnhdr = true;
+            log_info("HEADER", "%s", buf);
+            continue;
+        }
+
+        strncatf(args.request.header, sizeof(args.request.header), "%s", buf);
+        if (strcmp(buf, "\r\n") == 0) {
+            log_info("HEADER", "end of headers\n");
+            break; // Exit the loop when an empty line is encountered
+        }
+        log_info("HEADER", "%s", buf);
+    }
+
+    if (!has_hosthdr) {
+        strncatf(args.request.header, sizeof(args.request.header), "Host: %s\r\n", args.request.url.host);
+    }
+
+    if (!has_connhdr) {
+        strncatf(args.request.header, sizeof(args.request.header), "Connection: close\r\n");
+    }
+
+    if (!has_pconnhdr) {
+        strncatf(args.request.header, sizeof(args.request.header), "Proxy-Connection: close\r\n");
+    }
+
+    if (args.request.url.port == 0) {
+        args.request.url.port = 80;
+    }
     handle_request__((void *)&args);
 }
 
@@ -174,4 +247,8 @@ void read_requesthdrs(rio_t *rp) {
         }
         log_info("HEADER", "%s", buf);
     }
+}
+
+void sigpipe_handler(int signal) {
+    log_warn("WARN", "PIPE Error");
 }
