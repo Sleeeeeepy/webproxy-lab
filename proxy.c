@@ -160,6 +160,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
 
     result.succ = true;
     result.data = NULL;
+    
     char* url_copy = strdup(url);
 
     token = strtok_r(url_copy, ":", &rest);
@@ -175,6 +176,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         }
         size_t len = MIN(strlen(token), sizeof(parsedURL->path) - 1);
         strncpy(parsedURL->path, token, len);
+        result.has_data = false;
         return result;
     }
 
@@ -186,7 +188,10 @@ static result_t parse_url(const char* url, URL* parsedURL) {
 
     if (rest != NULL) {
         size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
-        strncpy(parsedURL->path, rest, len);
+        if (rest[0] != '/') {
+            strcpy(parsedURL->path, "/");
+        }
+        strncat(parsedURL->path, rest, len);
     } else {
         strcpy(parsedURL->path, "/");
     }
@@ -218,6 +223,8 @@ static result_t parse_url(const char* url, URL* parsedURL) {
             parsedURL->port = atoi(saveptr);
         }
 
+        char* pos = strchr(parsedURL->host, ':');
+        *pos = '\0';
         free(host_copy);
     }
 
