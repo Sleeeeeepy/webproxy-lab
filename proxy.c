@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdio.h>
+#include <sys/epoll.h>
 
 #include "csapp.h"
 
@@ -16,6 +17,17 @@ typedef struct {
 } URL;
 
 typedef struct {
+    URL url;
+    char* method;
+    char* ver;
+} request_t;
+
+typedef struct {
+    int fd;
+    request_t request;
+} targs_t;
+
+typedef struct {
     bool succ;
     bool has_data;
     void* data;
@@ -26,26 +38,29 @@ static const char* user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3\r\n";
 
-static void make_req_hdr(char* buf, size_t n, URL url);
-static result_t parse_url(const char* url, URL* parsedURL);
+static void make_req_hdr(char* buf, size_t n, const URL* url);
+static void make_request(char* buf, size_t n, const request_t* req);
+static result_t parse_url(const char* urlstr, URL* url);
 
-int main() {
-    printf("%s", user_agent_hdr);
-    URL url;
-    result_t result =
-        parse_url("http://www.cool.com.au/ersdfs?dfd=dfgd@s=1l", &url);
-    printf("result = %s\n", (result.succ) ? "true" : "fail");
-    printf("Protocol: %s\nHost: %s\nPath: %s\nPort: %d", url.proto, url.host,
-           url.path, url.port);
-    return 0;
+int main(int argc, char** argv) {
+
 }
 
-static void make_req_hdr(char* buf, size_t n, URL url) {
+static void handle_request(void* arg) {
+
+}
+
+static void make_req_hdr(char* buf, size_t n, const URL* url) {
     snprintf(buf, n, "%s", user_agent_hdr);
-    snprintf(buf, n, "%sHost: %s\r\n", buf, url.host);
+    snprintf(buf, n, "%sHost: %s\r\n", buf, url->host);
     snprintf(buf, n, "%sConnection: close\r\n", buf);
     snprintf(buf, n, "%sProxy-Connection: close\r\n", buf);
     snprintf(buf, n, "%s\r\n", buf);
+}
+
+static void make_request(char* buf, size_t n, const request_t* req) {
+    make_req_hdr(buf, n, &(req->url));
+    snprintf(buf, n, "%s %s %s\r\n%s", req->method, req->url, req->ver, buf);
 }
 
 static result_t parse_url(const char* url, URL* parsedURL) {
