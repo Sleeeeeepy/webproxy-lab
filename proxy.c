@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     if (Signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
         unix_error("Failed to set sigpipe handler");
     }
-    
+
     listen_fd = Open_listenfd(argv[1]);
     log_info("Info", "The proxy server is listening on port %s\n", argv[1]);
 
@@ -69,7 +69,7 @@ static void handle_request(int fd) {
     if (!parse_result.succ) {
         return;
     }
-    
+
     args.fd = fd;
     strcpy(args.request.ver, HTTP_VER_STRING);
     host_len = strnlen(args.request.url.host, sizeof(args.request.url.host));
@@ -137,20 +137,27 @@ static void handle_request(int fd) {
 }
 
 static void handle_request__(void* arg) {
+    int server_fd, n;
+    char write_buf[MAXLINE], read_buf[MAXLINE], port[SMALL_MAXSIZE];
+    targs_t* args = (targs_t*)arg;
+    rio_t rio;
 
-}
+    snprintf(port, SMALL_MAXSIZE, "%d", args->request.url.port);
+    server_fd = open_clientfd(args->request.url.host, port);
+    if (server_fd < 0) {
+        // log_error("Error", "Failed to connect to server", args->request.url.host, args->request.url.port);
+        clienterror(args->fd, "Internal Server Error", "500", "Proxy Error", "Failed to connect tot server");
+        return;
+    }
+    rio_readinitb(&rio, server_fd);
 
-static void make_req_hdr(char* buf, size_t n, const URL* url) {
-    snprintf(buf, n, "%s", user_agent_hdr);
-    snprintf(buf, n, "%sHost: %s\r\n", buf, url->host);
-    snprintf(buf, n, "%sConnection: close\r\n", buf);
-    snprintf(buf, n, "%sProxy-Connection: close\r\n", buf);
-    snprintf(buf, n, "%s\r\n", buf);
-}
+    snprintf(write_buf, sizeof(write_buf), "%s %s %s\r\n%s", args->request.method, args->request.url.path, args->request.ver, args->request.header);
+    Rio_writen(server_fd, write_buf, strnlen(write_buf, sizeof(write_buf)));
+    while ((n = rio_readlineb(&rio, read_buf, sizeof(read_buf))) != 0) {
+        Rio_writen(args->fd, read_buf, n);
+    }
 
-static void make_request(char* buf, size_t n, const request_t* req) {
-    make_req_hdr(buf, n, &(req->url));
-    snprintf(buf, n, "%s %s %s\r\n%s", req->method, req->url, req->ver, buf);
+    Close(server_fd);
 }
 
 static result_t parse_url(const char* url, URL* parsedURL) {
@@ -222,7 +229,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         if (saveptr != NULL) {
             parsedURL->port = atoi(saveptr);
         }
-
+        
         char* pos = strchr(parsedURL->host, ':');
         *pos = '\0';
         free(host_copy);
@@ -254,6 +261,23 @@ void read_requesthdrs(rio_t *rp) {
         }
         log_info("HEADER", "%s", buf);
     }
+}
+
+static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
+    char buf[MAXLINE], body[MAXBUF];
+
+    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+    rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-type: text/html\r\n");
+    rio_writen(fd, buf, strlen(buf));
+    sprintf(body, "<html><title>Proxy Error</title>");
+    sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
+    sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
+    sprintf(body, "%s<hr><em>Proxy</em>\r\n", body);
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    rio_writen(fd, buf, strlen(buf));
+    rio_writen(fd, body, strlen(body));
 }
 
 void sigpipe_handler(int signal) {
