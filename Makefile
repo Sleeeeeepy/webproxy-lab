@@ -10,14 +10,20 @@ LDFLAGS = -lpthread
 
 all: proxy
 
+string.o: string.c string.h
+	$(CC) $(CFLAGS) -c string.c
+
+logger.o: logger.c logger.h
+	$(CC) $(CFLAGS) -c logger.c
+
 csapp.o: csapp.c csapp.h
 	$(CC) $(CFLAGS) -c csapp.c
 
 proxy.o: proxy.c csapp.h
 	$(CC) $(CFLAGS) -c proxy.c
 
-proxy: proxy.o csapp.o
-	$(CC) $(CFLAGS) proxy.o csapp.o -o proxy $(LDFLAGS)
+proxy: proxy.o csapp.o logger.o string.o
+	$(CC) $(CFLAGS) proxy.o csapp.o logger.o string.o -o proxy $(LDFLAGS)
 
 # Creates a tarball in ../proxylab-handin.tar that you can then
 # hand in. DO NOT MODIFY THIS!
