@@ -8,34 +8,14 @@
  */
 #include <time.h>
 #include "csapp.h"
-
-typedef enum {
-    UNKOWN = 0,
-    GET = 1,
-    HEAD = 2
-} http_method_t;
-
-void doit(int fd);
-void read_requesthdrs(rio_t *rp);
-int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, struct stat *sbuf, http_method_t method);
-void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs, http_method_t method);
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
-                 char *longmsg, http_method_t method);
-void sigchld_handler(int signal);
-void sigpipe_handler(int signal);
-void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
-void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
-void rio_writen__(int fd, char *buf, size_t n);
-int endsWith(const char *str, const char *suffix);
+#include "tiny.h"
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
-
+    
     /* Check command line args */
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -63,52 +43,32 @@ int main(int argc, char **argv) {
     }
 }
 
-void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs) {
+void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs, http_method_t method) {
     struct stat sbuf;
     read_requesthdrs(rio);
     int is_static = parse_uri(uri, filename, cgiargs);
     if (stat(filename, &sbuf) < 0) {
-        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file", GET);
+        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file", method);
         return;
     }
 
     if (is_static) {
         if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", GET);
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", method);
             return;
         }
-        serve_static(fd, filename, &sbuf, GET);
+        serve_static(fd, filename, &sbuf, method);
     } else {
         if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", GET);
+            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", method);
             return;
         }
-        serve_dynamic(fd, filename, cgiargs, GET);
+        serve_dynamic(fd, filename, cgiargs, method);
     }
 }
 
 void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs) {
-    struct stat sbuf;
-    read_requesthdrs(rio);
-    int is_static = parse_uri(uri, filename, cgiargs);
-    if (stat(filename, &sbuf) < 0) {
-        clienterror(fd, filename, "404", "Not found", "Tiny coludn't find this file", HEAD);
-        return;
-    }
-
-    if (is_static) {
-        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file", HEAD);
-            return;
-        }
-        serve_static(fd, filename, sbuf.st_size, HEAD);
-    } else {
-        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
-            clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program", HEAD);
-            return;
-        }
-        serve_dynamic(fd, filename, cgiargs, HEAD);
-    }
+    handle_get(fd, rio, uri, filename, cgiargs, HEAD);
 }
 
 void doit(int fd) {
@@ -125,7 +85,7 @@ void doit(int fd) {
     printf("Request headers:\n%s\n", buf);
     sscanf(buf, "%s %s %s", method, uri, version);
     if (strncasecmp(method, "GET", 4) == 0) {
-        handle_get(fd, &rio, uri, filename, cgiargs); 
+        handle_get(fd, &rio, uri, filename, cgiargs, GET); 
         return;
     } else if (strncasecmp(method, "HEAD", 5) == 0) {
         handle_head(fd, &rio, uri, filename, cgiargs);
@@ -161,7 +121,7 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
 
 void read_requesthdrs(rio_t *rp) {
     char buf[MAXLINE];
-    if (!endsWith(buf, "\r\n\r\n")) {
+    if (!endsWith(rp->rio_buf, "\r\n\r\n")) {
         printf("invlid header!\n");
         return;
     }
