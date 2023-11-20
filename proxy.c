@@ -3,44 +3,18 @@
 #include <sys/epoll.h>
 
 #include "csapp.h"
+#include "proxy.h"
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE  1049000
 #define MAX_OBJECT_SIZE 102400
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
 
-typedef struct {
-    char proto[255];
-    char host[255];
-    char path[255];
-    int port;
-} URL;
-
-typedef struct {
-    URL url;
-    char* method;
-    char* ver;
-} request_t;
-
-typedef struct {
-    int fd;
-    request_t request;
-} targs_t;
-
-typedef struct {
-    bool succ;
-    bool has_data;
-    void* data;
-} result_t;
 
 /* You won't lose style points for including this long line in your code */
 static const char* user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3\r\n";
-
-static void make_req_hdr(char* buf, size_t n, const URL* url);
-static void make_request(char* buf, size_t n, const request_t* req);
-static result_t parse_url(const char* urlstr, URL* url);
 
 int main(int argc, char** argv) {
 
