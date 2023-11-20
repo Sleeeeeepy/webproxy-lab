@@ -1,9 +1,13 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <sys/epoll.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 #include "csapp.h"
 #include "proxy.h"
+#include "logger.h"
+#include "string.h"
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE  1049000
@@ -17,10 +21,49 @@ static const char* user_agent_hdr =
     "Firefox/10.0.3\r\n";
 
 int main(int argc, char** argv) {
+    int listen_fd, client_fd;
+    struct sockaddr_storage client_addr, listen_addr;
+    socklen_t client_len;
+    char host[MAXLINE], port[MAXLINE];
+    URL url;
+    parse_url("/winter.mp4", &url);
+    if (argc != 2) {
+        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        exit(1);
+    }
+    
+    listen_fd = Open_listenfd(argv[1]);
+    log_info("Info", "The proxy server is listening on port %s\n", argv[1]);
 
+    while (true) {
+        client_len = sizeof(client_addr);
+        client_fd = Accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
+        Getnameinfo((struct sockaddr*)&client_addr, client_len, host, sizeof(host), port, sizeof(host), 0);
+        log_info("Connection", "%s:%s\n", host, port);
+        handle_request(client_fd);
+        Close(client_fd);
+    }
+    Close(listen_fd);
 }
 
-static void handle_request(void* arg) {
+static void handle_request(int fd) {
+    char buf[MAXLINE];
+    char url_buf[MAXLINE];
+    targs_t args;
+    rio_t rio;
+    rio_readinitb(&rio, fd);
+    if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
+        log_error("Error", "Failed to read data from %d\n", fd);
+        return;
+    }
+
+    sscanf(buf, "%s %s %s", args.request.method, url_buf, args.request.ver);
+    
+    args.fd = fd;
+    handle_request__((void *)&args);
+}
+
+static void handle_request__(void* arg) {
 
 }
 
@@ -45,12 +88,21 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     result.succ = true;
     result.data = NULL;
     char* url_copy = strdup(url);
-    strcpy(url_copy, url);
 
     token = strtok_r(url_copy, ":", &rest);
-    if (token != NULL) {
+    if (token != NULL && rest != NULL && *rest != '\0') {
         size_t len = MIN(strlen(token), sizeof(parsedURL->proto) - 1);
         strncpy(parsedURL->proto, token, len);
+    }
+
+    if ((rest != NULL && *rest == '\0') || rest == NULL) {
+        if (strstr(parsedURL->path, "../") != NULL || strstr(parsedURL->path, "//") != NULL) {
+            result.succ = false;
+            return result;
+        }
+        size_t len = MIN(strlen(token), sizeof(parsedURL->path) - 1);
+        strncpy(parsedURL->path, token, len);
+        return result;
     }
 
     token = strtok_r(rest, "/", &rest);
@@ -105,4 +157,21 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     free(url_copy);
 
     return result;
+}
+
+void read_requesthdrs(rio_t *rp) {
+    char *buf = rp->rio_buf;
+    if (!endsWith(buf, "\r\n\r\n")) {
+        log_error("ERROR", "Failed to read line from %d\n", rp->rio_fd);
+        return;
+    }
+
+    Rio_readlineb(rp, buf, MAXLINE);
+    while (strcmp(buf, "\r\n")) {
+        if (rio_readlineb(rp, buf, MAXLINE) < 0) {
+            log_error("ERROR", "Failed to read line from %d\n", rp->rio_fd);
+            return;
+        }
+        log_info("HEADER", "%s", buf);
+    }
 }
