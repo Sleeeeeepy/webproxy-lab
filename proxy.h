@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "csapp.h"
 
@@ -29,9 +30,17 @@ typedef struct {
     void* data;
 } result_t;
 
-static void handle_request(int fd);
-static void handle_request__(void* arg);
+
+typedef struct {
+    char default_host[MAXLINE];
+    char default_port[MAXLINE];
+} context_t;
+
+void print_usage(char* program);
+static void start_proxy(char* port, const context_t* ctx);
+static void handle_request(int fd, const context_t* ctx);
+static void handle_request__(void* arg, const context_t* ctx);
 static result_t parse_url(const char* urlstr, URL* url);
-static void read_requesthdrs(rio_t *rp);
 static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+void rio_writen__(int fd, char* buf, size_t n);
 void sigpipe_handler(int signal);

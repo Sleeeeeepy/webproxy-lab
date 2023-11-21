@@ -1,11 +1,12 @@
-#include <stdbool.h>
+#include "proxy.h"
+
+#include <arpa/inet.h>
+#include <getopt.h>
+#include <netdb.h>
 #include <stdio.h>
 #include <sys/epoll.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 
 #include "csapp.h"
-#include "proxy.h"
 #include "logger.h"
 #include "string.h"
 
@@ -21,43 +22,105 @@ static const char* user_agent_hdr =
     "Firefox/10.0.3\r\n";
 
 int main(int argc, char** argv) {
+    int c = 0;
+    int option_index = 0;
+    context_t ctx;
+
+    static struct option long_options[] = {{"host", required_argument, 0, 'h'},
+                                           {"port", required_argument, 0, 'p'},
+                                           {"help", no_argument, 0, '?'},
+                                           {0, 0, 0, 0}};
+
+    while ((c = getopt_long(argc, argv, "h:p:?", long_options, &option_index)) != -1) {
+        switch (c) {
+            case 0:
+                break;
+            case 'h':
+                strncpy(ctx.default_host, optarg, MAXLINE - 1);
+                ctx.default_host[MAXLINE - 1] = '\0';
+                break;
+            case 'p':
+                strncpy(ctx.default_port, optarg, MAXLINE - 1);
+                break;
+            case '?':
+                print_usage(argv[0]);
+                exit(0);
+            default:
+                fprintf(stderr, "Unknown option: %c\n", c);
+                print_usage(argv[0]);
+                exit(1);
+        }
+    }
+
+    int port_idx = optind;
+    while (optind < argc) {
+        optind++;
+    }
+
+    if (optind == port_idx) {
+        print_usage(argv[0]);
+        exit(1);
+    }
+
+    if (strlen(ctx.default_host) == 0) {
+        log_warn("WARN", "No default host has been set\n");
+        log_warn("WARN", "Relative path requests are forwarded to localhost\n");
+        snprintf(ctx.default_host, sizeof(ctx.default_host), "localhost");
+    }
+    log_info("INFO", "default host: %s\n", ctx.default_host);
+
+    if (strlen(ctx.default_port) == 0) {
+        snprintf(ctx.default_port, sizeof(ctx.default_port), "80"); 
+        log_warn("WARN", "No default port has benn set\n");
+        log_warn("WARN", "Relative path requests are forwarded to port 80\n");
+    }
+    log_info("INFO", "default port: %s\n", ctx.default_port);
+
+    if (Signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
+        unix_error("Failed to set sigpipe handler");
+    }
+
+    start_proxy(argv[port_idx], &ctx);
+}
+
+void print_usage(char* program) {
+    fprintf(stderr, "Usage: %s <PROXY_PORT> [OPTIONS]\n", program);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -h, --host=HOST      Set the default host of remote host\n");
+    fprintf(stderr, "  -p, --port=PORT      Set the default port of remote host\n");
+    fprintf(stderr, "  -?, --help           Show this help message\n");
+}
+
+static void start_proxy(char* proxy_port, const context_t* ctx) {
     int listen_fd, client_fd;
     struct sockaddr_storage client_addr, listen_addr;
     socklen_t client_len;
     char host[MAXLINE], port[MAXLINE];
 
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <port>\n", argv[0]);
-        exit(1);
-    }
-    
-    
-    if (Signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
-        unix_error("Failed to set sigpipe handler");
-    }
-
-    listen_fd = Open_listenfd(argv[1]);
-    log_info("Info", "The proxy server is listening on port %s\n", argv[1]);
+    listen_fd = Open_listenfd(proxy_port);
+    log_info("INFO", "The proxy server is listening on port %s\n", proxy_port);
 
     while (true) {
         client_len = sizeof(client_addr);
         client_fd = Accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
-        Getnameinfo((struct sockaddr*)&client_addr, client_len, host, sizeof(host), port, sizeof(host), 0);
+        Getnameinfo((struct sockaddr*)&client_addr, client_len, host,
+                    sizeof(host), port, sizeof(host), 0);
         log_info("Connection", "%s:%s\n", host, port);
-        handle_request(client_fd);
+        handle_request(client_fd, ctx);
         Close(client_fd);
     }
     Close(listen_fd);
 }
 
-static void handle_request(int fd) {
+static void handle_request(int fd, const context_t* ctx) {
     char buf[MAXLINE];
     char url_buf[MAXLINE];
     targs_t args;
     rio_t rio;
-    bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false;
+    bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false,
+         has_useragent = false;
     size_t host_len;
-    
+
     rio_readinitb(&rio, fd);
     if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
         log_error("Error", "Failed to read data from %d\n", fd);
@@ -67,6 +130,8 @@ static void handle_request(int fd) {
     sscanf(buf, "%s %s %s", args.request.method, url_buf, args.request.ver);
     result_t parse_result = parse_url(url_buf, &(args.request.url));
     if (!parse_result.succ) {
+        clienterror(fd, "Internal Server Error", "500", "Proxy Error",
+                    "Failed to connect to server");
         return;
     }
 
@@ -76,85 +141,120 @@ static void handle_request(int fd) {
 
     // TODO: read timeout with epoll
     while (rio_readlineb(&rio, buf, sizeof(buf)) > 0) {
-        if (strstr(buf, "\r\n") == NULL) {
+        if (fast_strstr(buf, "\r\n") == NULL) {
             log_warn("HEADER", "Invalid header\n");
             break;
         }
 
-        if (strstr(buf, "Host") != NULL) {
+        if (!has_useragent && fast_strstr(buf, "User-Agent") != NULL) {
+            strncat(args.request.header, user_agent_hdr,
+                    sizeof(args.request.header));
+            has_useragent = true;
+            continue;
+        }
+
+        if (!has_hosthdr && fast_strstr(buf, "Host") != NULL) {
             if (host_len == 0) {
                 log_warn("WARN", "host_len is zero.\n");
-                strncat(args.request.header, "Host: http://127.0.0.1:8081", sizeof(args.request.header));
+                strncat(args.request.header, "Host: http://127.0.0.1:8081",
+                        sizeof(args.request.header));
                 strcpy(args.request.url.proto, "http");
                 strcpy(args.request.url.host, "localhost");
                 args.request.url.port = 8081;
                 continue;
             }
-            strncatf(args.request.header, sizeof(args.request.header), "Host: %s\r\n", args.request.url.host);
+            strncatf(args.request.header, sizeof(args.request.header),
+                     "Host: %s\r\n", args.request.url.host);
             has_hosthdr = true;
             log_info("HEADER", "%s", buf);
             continue;
         }
 
-        if (strstr(buf, "Connection") != NULL) {
-            strncatf(args.request.header, sizeof(args.request.header), "Connection: close\r\n");
-            has_connhdr = true;
-            log_info("HEADER", "%s", buf);
-            continue;
-        }
-
-        if (strstr(buf, "Proxy-Connection") != NULL) {
-            strncatf(args.request.header, sizeof(args.request.header), "Proxy-Connection: close\r\n");
+        if (!has_pconnhdr && fast_strstr(buf, "Proxy-Connection") != NULL) {
+            strncatf(args.request.header, sizeof(args.request.header),
+                     "Proxy-Connection: close\r\n");
             has_pconnhdr = true;
             log_info("HEADER", "%s", buf);
             continue;
         }
 
+        if (!has_connhdr && fast_strstr(buf, "Connection") != NULL) {
+            strncatf(args.request.header, sizeof(args.request.header),
+                     "Connection: close\r\n");
+            has_connhdr = true;
+            log_info("HEADER", "%s", buf);
+            continue;
+        }
+        
         strncatf(args.request.header, sizeof(args.request.header), "%s", buf);
         if (strcmp(buf, "\r\n") == 0) {
             log_info("HEADER", "end of headers\n");
-            break; // Exit the loop when an empty line is encountered
+            break;  // Exit the loop when an empty line is encountered
         }
         log_info("HEADER", "%s", buf);
     }
 
+    if (!has_useragent) {
+        strncat(args.request.header, user_agent_hdr,
+                sizeof(args.request.header));
+    }
+
     if (!has_hosthdr) {
-        strncatf(args.request.header, sizeof(args.request.header), "Host: %s\r\n", args.request.url.host);
+        strncatf(args.request.header, sizeof(args.request.header),
+                 "Host: %s\r\n", args.request.url.host);
     }
 
     if (!has_connhdr) {
-        strncatf(args.request.header, sizeof(args.request.header), "Connection: close\r\n");
+        strncatf(args.request.header, sizeof(args.request.header),
+                 "Connection: close\r\n");
     }
 
     if (!has_pconnhdr) {
-        strncatf(args.request.header, sizeof(args.request.header), "Proxy-Connection: close\r\n");
+        strncatf(args.request.header, sizeof(args.request.header),
+                 "Proxy-Connection: close\r\n");
     }
 
     if (args.request.url.port == 0) {
         args.request.url.port = 80;
     }
-    handle_request__((void *)&args);
+    handle_request__((void*)&args, ctx);
 }
 
-static void handle_request__(void* arg) {
+static void handle_request__(void* arg, const context_t* ctx) {
     int server_fd, n;
     char write_buf[MAXLINE], read_buf[MAXLINE], port[SMALL_MAXSIZE];
     targs_t* args = (targs_t*)arg;
     rio_t rio;
+    size_t write_len;
 
     snprintf(port, SMALL_MAXSIZE, "%d", args->request.url.port);
     server_fd = open_clientfd(args->request.url.host, port);
     if (server_fd < 0) {
-        // log_error("Error", "Failed to connect to server", args->request.url.host, args->request.url.port);
-        clienterror(args->fd, "Internal Server Error", "500", "Proxy Error", "Failed to connect tot server");
+        log_error("ERROR", "Failed to connect to server\n",
+                  args->request.url.host, args->request.url.port);
+        clienterror(args->fd, "Internal Server Error", "500", "Proxy Error",
+                    "Failed to connect to server");
         return;
     }
     rio_readinitb(&rio, server_fd);
 
-    snprintf(write_buf, sizeof(write_buf), "%s %s %s\r\n%s", args->request.method, args->request.url.path, args->request.ver, args->request.header);
-    Rio_writen(server_fd, write_buf, strnlen(write_buf, sizeof(write_buf)));
+    snprintf(write_buf, sizeof(write_buf), "%s %s %s\r\n%s",
+             args->request.method, args->request.url.path, args->request.ver,
+             args->request.header);
+    
+    write_len = strnlen(write_buf, sizeof(write_buf));
+    if (rio_writen(server_fd, write_buf, write_len) != write_len) {
+        log_error("ERROR", "Failed to request to the server\n");
+        clienterror(args->fd, "Internal Server Error", "500", "Proxy Error",
+                    "Failed to request to server");
+        return;
+    }
+
     while ((n = rio_readlineb(&rio, read_buf, sizeof(read_buf))) != 0) {
-        Rio_writen(args->fd, read_buf, n);
+        if (rio_writen(args->fd, read_buf, n) != n) {
+            log_error("ERROR", "Failed to response to the client\n");
+            break;
+        }
     }
 
     Close(server_fd);
@@ -167,7 +267,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
 
     result.succ = true;
     result.data = NULL;
-    
+
     char* url_copy = strdup(url);
 
     token = strtok_r(url_copy, ":", &rest);
@@ -177,7 +277,8 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     }
 
     if ((rest != NULL && *rest == '\0') || rest == NULL) {
-        if (strstr(parsedURL->path, "../") != NULL || strstr(parsedURL->path, "//") != NULL) {
+        if (fast_strstr(parsedURL->path, "../") != NULL ||
+            fast_strstr(parsedURL->path, "//") != NULL) {
             result.succ = false;
             return result;
         }
@@ -196,11 +297,11 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     if (rest != NULL) {
         size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
         if (rest[0] != '/') {
-            strcpy(parsedURL->path, "/");
+            strncpy(parsedURL->path, "/", 2);
         }
         strncat(parsedURL->path, rest, len);
     } else {
-        strcpy(parsedURL->path, "/");
+        strncpy(parsedURL->path, "/", 2);
     }
 
     // Parse port
@@ -229,14 +330,15 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         if (saveptr != NULL) {
             parsedURL->port = atoi(saveptr);
         }
-        
+
         char* pos = strchr(parsedURL->host, ':');
         *pos = '\0';
         free(host_copy);
     }
 
     // prevent directory traversal
-    if (strstr(parsedURL->path, "../") != NULL || strstr(parsedURL->path, "//") != NULL) {
+    if (fast_strstr(parsedURL->path, "../") != NULL ||
+        fast_strstr(parsedURL->path, "//") != NULL) {
         result.succ = false;
     }
 
@@ -246,40 +348,38 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     return result;
 }
 
-void read_requesthdrs(rio_t *rp) {
-    char *buf = rp->rio_buf;
-    if (!endsWith(buf, "\r\n\r\n")) {
-        log_error("ERROR", "Failed to read line from %d\n", rp->rio_fd);
-        return;
-    }
-
-    Rio_readlineb(rp, buf, MAXLINE);
-    while (strcmp(buf, "\r\n")) {
-        if (rio_readlineb(rp, buf, MAXLINE) < 0) {
-            log_error("ERROR", "Failed to read line from %d\n", rp->rio_fd);
-            return;
-        }
-        log_info("HEADER", "%s", buf);
-    }
-}
-
-static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
+static void clienterror(int fd, char* cause, char* errnum, char* shortmsg,
+                        char* longmsg) {
     char buf[MAXLINE], body[MAXBUF];
 
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     sprintf(buf, "Content-type: text/html\r\n");
-    rio_writen(fd, buf, strlen(buf));
+    rio_writen__(fd, buf, strlen(buf));
     sprintf(body, "<html><title>Proxy Error</title>");
-    sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
+    sprintf(body,
+            "%s<body bgcolor="
+            "ffffff"
+            ">\r\n",
+            body);
     sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
     sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
     sprintf(body, "%s<hr><em>Proxy</em>\r\n", body);
     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-    rio_writen(fd, buf, strlen(buf));
-    rio_writen(fd, body, strlen(body));
+    rio_writen__(fd, buf, strlen(buf));
+    rio_writen__(fd, body, strlen(body));
 }
 
-void sigpipe_handler(int signal) {
-    log_warn("WARN", "PIPE Error");
+void rio_writen__(int fd, char* buf, size_t n) {
+    if (rio_writen(fd, buf, n) == n) {
+        return;
+    }
+
+    if (errno == EPIPE) {
+        return;
+    }
+
+    unix_error("rio_writen error");
 }
+
+void sigpipe_handler(int signal) { log_warn("WARN", "PIPE Error"); }
