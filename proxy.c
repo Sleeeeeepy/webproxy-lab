@@ -15,7 +15,7 @@
 #define MAX_OBJECT_SIZE 102400
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
 #define HTTP_VER_STRING "HTTP/1.0"
-#define MAX_EVENTS 100
+#define MAX_EVENTS      100
 
 /* You won't lose style points for including this long line in your code */
 static const char* user_agent_hdr =
@@ -32,7 +32,8 @@ int main(int argc, char** argv) {
                                            {"help", no_argument, 0, '?'},
                                            {0, 0, 0, 0}};
 
-    while ((c = getopt_long(argc, argv, "h:p:?", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "h:p:?", long_options,
+                            &option_index)) != -1) {
         switch (c) {
             case 0:
                 break;
@@ -71,7 +72,7 @@ int main(int argc, char** argv) {
     log_info("INFO", "default host: %s\n", ctx.default_host);
 
     if (strlen(ctx.default_port) == 0) {
-        snprintf(ctx.default_port, sizeof(ctx.default_port), "80"); 
+        snprintf(ctx.default_port, sizeof(ctx.default_port), "80");
         log_warn("WARN", "No default port has benn set\n");
         log_warn("WARN", "Relative path requests are forwarded to port 80\n");
     }
@@ -87,8 +88,10 @@ int main(int argc, char** argv) {
 void print_usage(char* program) {
     fprintf(stderr, "Usage: %s <PROXY_PORT> [OPTIONS]\n", program);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -h, --host=HOST      Set the default host of remote host\n");
-    fprintf(stderr, "  -p, --port=PORT      Set the default port of remote host\n");
+    fprintf(stderr,
+            "  -h, --host=HOST      Set the default host of remote host\n");
+    fprintf(stderr,
+            "  -p, --port=PORT      Set the default port of remote host\n");
     fprintf(stderr, "  -?, --help           Show this help message\n");
 }
 
@@ -98,7 +101,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
     socklen_t client_len;
     char host[MAXLINE], port[MAXLINE];
     struct epoll_event event, events[MAX_EVENTS];
-    
+
     listen_fd = Open_listenfd(proxy_port);
     log_info("INFO", "The proxy server is listening on port %s\n", proxy_port);
     epoll_fd = epoll_create1(0);
@@ -110,7 +113,6 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
         return;
     }
 
-    
     event.events = EPOLLIN | EPOLLET;
     event.data.fd = listen_fd;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &event) == -1) {
@@ -121,7 +123,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
     }
 
     while (true) {
-        int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+        int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, 500);
         if (num_events == -1) {
             log_error("ERROR", "An error in epoll_wait\n");
             exit(1);
@@ -130,14 +132,16 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
         for (int i = 0; i < num_events; i++) {
             if (events[i].data.fd == listen_fd) {
                 client_len = sizeof(client_addr);
-                client_fd = Accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
-                
+                client_fd = Accept(listen_fd, (struct sockaddr*)&client_addr,
+                                   &client_len);
+
                 int flags = fcntl(client_fd, F_GETFL, 0);
                 fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 
                 event.events = EPOLLIN | EPOLLET;
                 event.data.fd = client_fd;
-                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event) == -1) {
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event) ==
+                    -1) {
                     log_error("ERROR", "Failed to add client to epoll\n");
                     close(client_fd);
                     continue;
@@ -162,7 +166,8 @@ static void threaded_request(int fd, const context_t* ctx) {
     targs_t* thread_args = calloc(1, sizeof(targs_t));
     thread_args->ctx = ctx;
     thread_args->fd = fd;
-    if (pthread_create(&tid, NULL, (void* (*)(void*))thread_start, (void*)thread_args) != 0) {
+    if (pthread_create(&tid, NULL, (void* (*)(void*))thread_start,
+                       (void*)thread_args) != 0) {
         log_error("ERROR", "Failed to create new thread\n");
         free(thread_args);
         return;
@@ -173,7 +178,8 @@ static void thread_start(void* targs) {
     targs_t* args = (targs_t*)targs;
     if (pthread_detach(pthread_self()) < 0) {
         log_error("ERROR", "Failed to set detach mode\n");
-        if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
+        if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) ==
+            -1) {
             log_error("ERROR", "Failed to remove client to epoll\n");
         }
         free(targs);
@@ -181,7 +187,7 @@ static void thread_start(void* targs) {
         pthread_exit("error");
     }
     handle_request(targs);
-    
+
     if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
         log_error("ERROR", "Failed to remove client to epoll\n");
     }
@@ -197,7 +203,7 @@ static void handle_request(void* targs) {
     bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false,
          has_useragent = false;
     size_t host_len;
-    
+
     rio_readinitb(&rio, args->fd);
     if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
         log_error("Error", "Failed to read data from %d\n", args->fd);
@@ -206,7 +212,7 @@ static void handle_request(void* targs) {
 
     sscanf(buf, "%s %s %s", args->request.method, url_buf, args->request.ver);
     result_t parse_result = parse_url(url_buf, &(args->request.url));
-    if (!parse_result.succ) {
+    if (!parse_result.succ || strlen(args->request.ver) == 0) {
         clienterror(args->fd, "Bad Request", "400", "Proxy Error",
                     "Bad Request");
         return;
@@ -232,7 +238,9 @@ static void handle_request(void* targs) {
             if (host_len == 0) {
                 log_warn("WARN", "relative path received\n");
                 log_warn("WARN", "forward to default host\n");
-                strncatf(args->request.header, sizeof(args->request.header), "Host: http://%s:%s", args->ctx->default_host, args->ctx->default_port);
+                strncatf(args->request.header, sizeof(args->request.header),
+                         "Host: http://%s:%s", args->ctx->default_host,
+                         args->ctx->default_port);
                 strcpy(args->request.url.proto, "http");
                 strcpy(args->request.url.host, "localhost");
                 args->request.url.port = 8081;
@@ -260,7 +268,7 @@ static void handle_request(void* targs) {
             log_info("HEADER", "%s", buf);
             continue;
         }
-        
+
         strncatf(args->request.header, sizeof(args->request.header), "%s", buf);
         if (strcmp(buf, "\r\n") == 0) {
             log_info("HEADER", "end of headers\n");
@@ -321,7 +329,7 @@ static void handle_request__(targs_t* args) {
     snprintf(write_buf, sizeof(write_buf), "%s %s %s\r\n%s",
              args->request.method, args->request.url.path, args->request.ver,
              args->request.header);
-    
+
     write_len = strnlen(write_buf, sizeof(write_buf));
     if (rio_writen(server_fd, write_buf, write_len) != write_len) {
         log_error("ERROR", "Failed to request to the server\n");
@@ -336,7 +344,7 @@ static void handle_request__(targs_t* args) {
             break;
         }
     }
-    
+
     Close(server_fd);
     log_success("SUCCESS", "Send response successfully\n");
 }
