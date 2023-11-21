@@ -158,7 +158,6 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
 }
 
 static void threaded_request(int fd, const context_t* ctx) {
-    log_success("DEBUG", "threaded_requst\n");
     pthread_t tid;
     targs_t* thread_args = calloc(1, sizeof(targs_t));
     thread_args->ctx = ctx;
@@ -181,7 +180,6 @@ static void thread_start(void* targs) {
         Close(args->fd);
         pthread_exit("error");
     }
-    log_success("DEBUG", "start handle_request\n");
     handle_request(targs);
     
     if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
@@ -217,7 +215,6 @@ static void handle_request(void* targs) {
     strcpy(args->request.ver, HTTP_VER_STRING);
     host_len = strnlen(args->request.url.host, sizeof(args->request.url.host));
 
-    log_success("DEBUG", "start to write header %d\n", args->fd);
     while (rio_readlineb(&rio, buf, sizeof(buf)) > 0) {
         if (fast_strstr(buf, "\r\n") == NULL) {
             log_warn("HEADER", "Invalid header\n");
@@ -310,7 +307,6 @@ static void handle_request__(targs_t* args) {
     size_t write_len;
 
     snprintf(port, SMALL_MAXSIZE, "%d", args->request.url.port);
-    log_success("DEBUG", "start connect server %s:%d\n", args->request.url.host, args->request.url.port);
     server_fd = open_clientfd(args->request.url.host, port);
     if (server_fd < 0) {
         log_error("ERROR", "Failed to connect to server\n",
@@ -340,8 +336,9 @@ static void handle_request__(targs_t* args) {
             break;
         }
     }
-
+    
     Close(server_fd);
+    log_success("SUCCESS", "Send response successfully\n");
 }
 
 static result_t parse_url(const char* url, URL* parsedURL) {
