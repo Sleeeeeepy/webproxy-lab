@@ -82,6 +82,10 @@ int main(int argc, char** argv) {
         unix_error("Failed to set sigpipe handler");
     }
 
+    if (Signal(SIGINT, sigint_handler) == SIG_ERR) {
+        unix_error("Failed to set sigint handler");
+    }
+
     start_proxy(argv[port_idx], &ctx);
 }
 
@@ -477,4 +481,10 @@ void rio_writen__(int fd, char* buf, size_t n) {
     unix_error("rio_writen error");
 }
 
-void sigpipe_handler(int signal) { log_warn("WARN", "PIPE Error"); }
+void sigpipe_handler(int signal) { log_warn("WARN", "Broken pipe\n"); }
+void sigint_handler(int signal) {
+    log_info("INFO", "Closing server...\n");
+    free(http_cache);
+    log_info("INFO", "Bye\n");
+    exit(0);
+}

@@ -49,3 +49,4 @@ static result_t parse_url(const char* urlstr, URL* url);
 static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 void rio_writen__(int fd, char* buf, size_t n);
 void sigpipe_handler(int signal);
+void sigint_handler(int signal);
