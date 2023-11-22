@@ -37,7 +37,7 @@ typedef struct {
     int fd;
     request_t request;
     context_t* ctx;
-    char* raw_url[MAXLINE];
+    char raw_url[MAXLINE];
 } targs_t;
 
 void print_usage(char* program);

@@ -20,7 +20,7 @@ char* strncatf(char* c, size_t n, char* format, ...) {
     char buf[n];
     va_list args;
     va_start(args, format);
-    int result = vsnprintf(buf, n, format, args);
+    vsnprintf(buf, n, format, args);
     va_end(args);
     return strncat(c, buf, n);
 }

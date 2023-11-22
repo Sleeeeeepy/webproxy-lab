@@ -99,7 +99,7 @@ void print_usage(char* program) {
 
 static void start_proxy(char* proxy_port, context_t* ctx) {
     int listen_fd, client_fd, epoll_fd;
-    struct sockaddr_storage client_addr, listen_addr;
+    struct sockaddr_storage client_addr;
     socklen_t client_len;
     char host[MAXLINE], port[MAXLINE];
     struct epoll_event event, events[MAX_EVENTS];
@@ -108,7 +108,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
     log_info("INFO", "The proxy server is listening on port %s\n", proxy_port);
     epoll_fd = epoll_create1(0);
     ctx->epoll_fd = epoll_fd;
-    ctx->events = &events;
+    ctx->events = events;
     if (epoll_fd == -1) {
         log_error("ERROR", "Failed to create epoll\n");
         close(listen_fd);
@@ -360,8 +360,7 @@ static void handle_request__(targs_t* args) {
     size_t total_len = 0;
 
     snprintf(port, SMALL_MAXSIZE, "%d", args->request.url.port);
-    server_fd = open_clientfd(args->request.url.host, port);
-    if (server_fd < 0) {
+    if ((server_fd = open_clientfd(args->request.url.host, port)) < 0) {
         log_error("ERROR", "Failed to connect to server\n", args->request.url.host,
                   args->request.url.port);
         log_error("ERROR", "host: %s:%s\n", args->request.url.host, port);
@@ -413,11 +412,12 @@ static void handle_request__(targs_t* args) {
 static result_t parse_url(const char* url, URL* parsedURL) {
     char *token, *rest;
     bool no_proto = false;
-    memset(parsedURL, 0x00, sizeof(*parsedURL));
+    char* url_copy = strdup(url);
     result_t result;
+
+    memset(parsedURL, 0x00, sizeof(*parsedURL));
     result.succ = true;
     result.data = NULL;
-    char* url_copy = strdup(url);
 
     // Parse proto
     if (fast_strstr(url_copy, "://") != NULL) {
