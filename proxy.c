@@ -546,7 +546,7 @@ void rio_writen__(int fd, char* buf, size_t n) {
 void sigpipe_handler(int signal) { log_warn("WARN", "Broken pipe\n"); }
 void sigint_handler(int signal) {
     log_info("INFO", "Closing server...\n");
-    free(http_cache);
+    free_cache(http_cache);
     pthread_mutex_destroy(&mutex);
     log_info("INFO", "Bye\n");
     exit(0);
