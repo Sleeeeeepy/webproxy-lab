@@ -6,4 +6,7 @@ AlignConsecutiveMacros: 'true'
 AlignEscapedNewlines: Left
 IndentWidth: 4
 UseTab: Never
+ColumnLimit: 100
+PointerAlignment: Left
+DerivePointerAlignment: false
 ...

@@ -1,9 +1,9 @@
+#include "string.h"
+
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-#include <stdarg.h>
-
-#include "string.h"
 
 int endsWith(const char* str, const char* suffix) {
     size_t str_len = strlen(str);
@@ -16,7 +16,7 @@ int endsWith(const char* str, const char* suffix) {
     return strncmp(str + (str_len - suffix_len), suffix, suffix_len) == 0;
 }
 
-char* strncatf(char* c, size_t n,  char* format, ...) {
+char* strncatf(char* c, size_t n, char* format, ...) {
     char buf[n];
     va_list args;
     va_start(args, format);
@@ -51,10 +51,10 @@ char* fast_strstr(const char* haystack, const char* needle) {
     size_t haystack_len = strlen(haystack);
 
     if (needle_len == 0) {
-        return (char *)haystack;
+        return (char*)haystack;
     }
 
-    int *lps = (int *)malloc(sizeof(int) * needle_len);
+    int* lps = (int*)malloc(sizeof(int) * needle_len);
     fill_lps_arr__(needle, needle_len, lps);
 
     int i = 0;
@@ -68,7 +68,7 @@ char* fast_strstr(const char* haystack, const char* needle) {
 
         if (j == needle_len) {
             free(lps);
-            return (char *)(haystack + i - j);
+            return (char*)(haystack + i - j);
         } else if (i < haystack_len && needle[j] != haystack[i]) {
             if (j != 0) {
                 j = lps[j - 1];

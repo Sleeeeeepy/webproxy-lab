@@ -1,5 +1,5 @@
-#include <stdlib.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <sys/epoll.h>
 
 #include "csapp.h"
@@ -37,7 +37,7 @@ typedef struct {
     int fd;
     request_t request;
     context_t* ctx;
-    char *raw_url[MAXLINE];
+    char* raw_url[MAXLINE];
 } targs_t;
 
 void print_usage(char* program);
@@ -49,7 +49,7 @@ static void handle_request(void* targs);
 static void handle_request_cache__(targs_t* args, char* data, size_t size);
 static void handle_request__(targs_t* args);
 static result_t parse_url(const char* urlstr, URL* url);
-static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+static void clienterror(int fd, char* cause, char* errnum, char* shortmsg, char* longmsg);
 void rio_writen__(int fd, char* buf, size_t n);
 void sigpipe_handler(int signal);
 void sigint_handler(int signal);
