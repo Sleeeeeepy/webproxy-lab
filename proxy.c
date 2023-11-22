@@ -9,10 +9,8 @@
 #include "csapp.h"
 #include "logger.h"
 #include "string.h"
+#include "cache.h"
 
-/* Recommended max cache and object sizes */
-#define MAX_CACHE_SIZE  1049000
-#define MAX_OBJECT_SIZE 102400
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
 #define HTTP_VER_STRING "HTTP/1.0"
 #define MAX_EVENTS      100
@@ -21,7 +19,8 @@
 static const char* user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3\r\n";
-
+static cache* http_cache;
+static pthread_mutex_t mutex;
 int main(int argc, char** argv) {
     int c = 0;
     int option_index = 0;
@@ -86,6 +85,8 @@ int main(int argc, char** argv) {
         unix_error("Failed to set sigint handler");
     }
 
+    pthread_mutex_init(&mutex, NULL);
+    http_cache = create_cache();
     start_proxy(argv[port_idx], &ctx);
 }
 
@@ -210,6 +211,8 @@ static void handle_request(void* targs) {
     bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false,
          has_useragent = false;
     size_t host_len;
+    bool need_update_cache = false;
+    cacheline* found = NULL;
 
     rio_readinitb(&rio, args->fd);
     if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
@@ -218,6 +221,8 @@ static void handle_request(void* targs) {
     }
 
     sscanf(buf, "%s %s %s", args->request.method, url_buf, args->request.ver);
+    log_info("REQUEST", "%s %s %s\n", args->request.method, url_buf, args->request.ver);
+
     result_t parse_result = parse_url(url_buf, &(args->request.url));
     if (!parse_result.succ || strlen(args->request.ver) == 0) {
         clienterror(args->fd, "Bad Request", "400", "Proxy Error",
@@ -279,7 +284,7 @@ static void handle_request(void* targs) {
         strncatf(args->request.header, sizeof(args->request.header), "%s", buf);
         if (strcmp(buf, "\r\n") == 0) {
             log_info("HEADER", "end of headers\n");
-            break;  // Exit the loop when an empty line is encountered
+            break;
         }
         log_info("HEADER", "%s", buf);
     }
@@ -312,7 +317,26 @@ static void handle_request(void* targs) {
         strcpy(args->request.url.host, args->ctx->default_host);
     }
 
+    if ((found = find(http_cache, url_buf)) == NULL) {
+        need_update_cache = true;
+    }
+
+    strncpy(args->raw_url, url_buf, sizeof(args->raw_url));
+    if (need_update_cache) {
     handle_request__(args);
+    } else {
+        handle_request_cache__(args, found->content, found->size);
+        return;
+    }
+}
+
+static void handle_request_cache__(targs_t* args, char* data, size_t size) {
+    log_info("INFO", "Send cached content\n");
+    if (rio_writen(args->fd, data, size) != size) {
+        log_error("ERROR", "Failed to response to the client\n");
+        return;
+    }
+    log_success("SUCCESS", "Send response successfully\n");
 }
 
 static void handle_request__(targs_t* args) {
@@ -320,13 +344,15 @@ static void handle_request__(targs_t* args) {
     char write_buf[MAXLINE], read_buf[MAXLINE], port[SMALL_MAXSIZE];
     rio_t rio;
     size_t write_len;
+    char cache_buf[MAX_OBJECT_SIZE];
+    size_t total_len = 0;
 
     snprintf(port, SMALL_MAXSIZE, "%d", args->request.url.port);
     server_fd = open_clientfd(args->request.url.host, port);
     if (server_fd < 0) {
         log_error("ERROR", "Failed to connect to server\n",
                   args->request.url.host, args->request.url.port);
-        log_error("ERROR", "host: %s:%s", args->request.url.host, port);
+        log_error("ERROR", "host: %s:%s\n", args->request.url.host, port);
         clienterror(args->fd, "Internal Server Error", "500", "Proxy Error",
                     "Failed to connect to server");
         return;
@@ -350,8 +376,17 @@ static void handle_request__(targs_t* args) {
             log_error("ERROR", "Failed to response to the client\n");
             break;
         }
+        total_len += n;
+        if (total_len < sizeof(cache_buf)) {
+            strcat(cache_buf, read_buf);
+        }
     }
 
+    if (total_len < MAX_OBJECT_SIZE) {
+        pthread_mutex_lock(&mutex);
+        add_head(http_cache, create_cacheline(args->raw_url, cache_buf));
+        pthread_mutex_unlock(&mutex);
+    }
     Close(server_fd);
     log_success("SUCCESS", "Send response successfully\n");
 }
@@ -485,6 +520,7 @@ void sigpipe_handler(int signal) { log_warn("WARN", "Broken pipe\n"); }
 void sigint_handler(int signal) {
     log_info("INFO", "Closing server...\n");
     free(http_cache);
+    pthread_mutex_destroy(&mutex);
     log_info("INFO", "Bye\n");
     exit(0);
 }

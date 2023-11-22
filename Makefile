@@ -9,21 +9,23 @@ CFLAGS = -g -Wall
 LDFLAGS = -lpthread
 
 all: proxy
+cache.o: cache.c cache.h
+	$(CC) $(CFLAGS) -c $<
 
 string.o: string.c string.h
-	$(CC) $(CFLAGS) -c string.c
+	$(CC) $(CFLAGS) -c $<
 
 logger.o: logger.c logger.h
-	$(CC) $(CFLAGS) -c logger.c
+	$(CC) $(CFLAGS) -c $<
 
 csapp.o: csapp.c csapp.h
-	$(CC) $(CFLAGS) -c csapp.c
+	$(CC) $(CFLAGS) -c $<
 
 proxy.o: proxy.c csapp.h
-	$(CC) $(CFLAGS) -c proxy.c
+	$(CC) $(CFLAGS) -c $<
 
-proxy: proxy.o csapp.o logger.o string.o
-	$(CC) $(CFLAGS) proxy.o csapp.o logger.o string.o -o proxy $(LDFLAGS)
+proxy: proxy.o csapp.o logger.o string.o cache.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Creates a tarball in ../proxylab-handin.tar that you can then
 # hand in. DO NOT MODIFY THIS!

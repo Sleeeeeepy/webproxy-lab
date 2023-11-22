@@ -37,6 +37,7 @@ typedef struct {
     int fd;
     request_t request;
     context_t* ctx;
+    char *raw_url[MAXLINE];
 } targs_t;
 
 void print_usage(char* program);
@@ -44,6 +45,7 @@ static void thread_start(void* targs);
 static void threaded_request(int fd, const context_t* ctx);
 static void start_proxy(char* port, context_t* ctx);
 static void handle_request(void* targs);
+static void handle_request_cache__(targs_t* args, char* data, size_t size);
 static void handle_request__(targs_t* args);
 static result_t parse_url(const char* urlstr, URL* url);
 static void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
