@@ -169,6 +169,14 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
     return;
 }
 
+// for debugging
+static void sync_request(int fd, const context_t* ctx) {
+    targs_t* args = calloc(1, sizeof(targs_t));
+    args->ctx = ctx;
+    args->fd = fd;
+    thread_start(args);
+}
+
 static void threaded_request(int fd, const context_t* ctx) {
     pthread_t tid;
     targs_t* thread_args = calloc(1, sizeof(targs_t));
