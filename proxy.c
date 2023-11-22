@@ -6,10 +6,10 @@
 #include <stdio.h>
 #include <sys/epoll.h>
 
+#include "cache.h"
 #include "csapp.h"
 #include "logger.h"
 #include "string.h"
-#include "cache.h"
 
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
 #define HTTP_VER_STRING "HTTP/1.0"
@@ -237,7 +237,8 @@ static void handle_request(void* targs) {
     }
 
     sscanf(buf, "%s %s %s", args->request.method, url_buf, args->request.ver);
-    log_info("REQUEST", "%s %s %s\n", args->request.method, url_buf, args->request.ver);
+    log_info("REQUEST", "%s %s %s\n", args->request.method, url_buf,
+             args->request.ver);
 
     result_t parse_result = parse_url(url_buf, &(args->request.url));
     if (!parse_result.succ || strlen(args->request.ver) == 0) {
@@ -249,17 +250,20 @@ static void handle_request(void* targs) {
     strcpy(args->request.ver, HTTP_VER_STRING);
     host_len = strnlen(args->request.url.host, sizeof(args->request.url.host));
     header_len = 0;
-    for (size_t n = rio_readlineb(&rio, buf, sizeof(buf)); n > 0; n = rio_readlineb(&rio, buf, sizeof(buf))) {
+    for (size_t n = rio_readlineb(&rio, buf, sizeof(buf)); n > 0;
+         n = rio_readlineb(&rio, buf, sizeof(buf))) {
         header_len += n;
         if (header_len > MAXLINE) {
             log_error("HEADER", "header is too large %d", header_len);
-            clienterror(args->fd, "Request Header Fields To Large", "431", "Proxy Error", "Failed to process requests");
+            clienterror(args->fd, "Request Header Fields To Large", "431",
+                        "Proxy Error", "Failed to process requests");
             return;
         }
 
         if (fast_strstr(buf, "\r\n") == NULL) {
             log_error("HEADER", "there is no \\r\\n\n");
-            clienterror(args->fd, "Internal Server Error", "500", "Proxy Error", "Failed to process requests");
+            clienterror(args->fd, "Internal Server Error", "500", "Proxy Error",
+                        "Failed to process requests");
             return;
         }
 
