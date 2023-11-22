@@ -382,7 +382,8 @@ static void handle_request__(targs_t* args) {
     while ((n = rio_readlineb(&rio, read_buf, sizeof(read_buf))) != 0) {
         if (rio_writen(args->fd, read_buf, n) != n) {
             log_error("ERROR", "Failed to response to the client\n");
-            break;
+            Close(server_fd);
+            return;
         }
         total_len += n;
         if (total_len < sizeof(cache_buf)) {
