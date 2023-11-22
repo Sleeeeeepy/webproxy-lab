@@ -131,7 +131,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
         int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (num_events == -1) {
             if (errno == EINTR) {
-                log_warn("WARN", "epoll_wait fails because of interrupt\n");
+                log_warn("WARN", "epoll_wait fails due to interrupt\n");
                 continue;
             }
             log_error("ERROR", "An error in epoll_wait\n");
