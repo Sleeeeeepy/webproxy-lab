@@ -22,16 +22,16 @@ void log_success(const char* header, const char* format, ...) {
 void log_error(const char* header, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    fprintf(stdout, ANSI_COLOR_RED"[%s] "ANSI_COLOR_RESET, header);
-    vfprintf(stdout, format, args);
+    fprintf(stderr, ANSI_COLOR_RED"[%s] "ANSI_COLOR_RESET, header);
+    vfprintf(stderr, format, args);
     va_end(args);
 }
 
 void log_warn(const char* header, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    fprintf(stdout, ANSI_COLOR_YELLOW"[%s] "ANSI_COLOR_RESET, header);
-    vfprintf(stdout, format, args);
+    fprintf(stderr, ANSI_COLOR_YELLOW"[%s] "ANSI_COLOR_RESET, header);
+    vfprintf(stderr, format, args);
     va_end(args);
 }
 
