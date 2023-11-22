@@ -492,7 +492,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         return result;
     }
 
-    // if there is no proto, decide proto using known port number
+    // if there is no proto, determine proto using known port number
     switch (parsedURL->port) {
         case 0:
         case 80:
