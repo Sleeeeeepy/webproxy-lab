@@ -131,6 +131,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
         int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (num_events == -1) {
             if (errno == EINTR) {
+                log_warn("WARN", "epoll_wait fails because of interrupt\n");
                 continue;
             }
             log_error("ERROR", "An error in epoll_wait\n");
@@ -157,7 +158,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
 
                 Getnameinfo((struct sockaddr*)&client_addr, client_len, host,
                             sizeof(host), port, sizeof(host), 0);
-                log_info("Connection", "%s:%s\n", host, port);
+                log_info("CONN", "%s:%s\n", host, port);
             } else {
                 client_fd = events[i].data.fd;
                 threaded_request(client_fd, ctx);
@@ -198,8 +199,12 @@ static void thread_start(void* targs) {
             -1) {
             log_error("ERROR", "Failed to remove client to epoll\n");
         }
+
+        if (close(args->fd) != 0) {
+            log_error("ERROR", "Failed to close fd %d\n", args->fd);
+        }
+
         free(targs);
-        Close(args->fd);
         pthread_exit("error");
     }
     handle_request(targs);
@@ -207,7 +212,10 @@ static void thread_start(void* targs) {
     if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
         log_error("ERROR", "Failed to remove client to epoll\n");
     }
-    Close(args->fd);
+
+    if (close(args->fd) != 0) {
+        log_error("ERROR", "Failed to close fd %d\n", args->fd);
+    }
     free(targs);
 }
 
@@ -218,13 +226,13 @@ static void handle_request(void* targs) {
     rio_t rio;
     bool has_connhdr = false, has_hosthdr = false, has_pconnhdr = false,
          has_useragent = false;
-    size_t host_len;
+    size_t host_len, header_len;
     bool need_update_cache = false;
     cacheline* found = NULL;
 
     rio_readinitb(&rio, args->fd);
     if (rio_readlineb(&rio, buf, sizeof(buf)) < 0) {
-        log_error("Error", "Failed to read data from %d\n", args->fd);
+        log_error("ERROR", "Failed to read data from %d\n", args->fd);
         return;
     }
 
@@ -240,11 +248,19 @@ static void handle_request(void* targs) {
 
     strcpy(args->request.ver, HTTP_VER_STRING);
     host_len = strnlen(args->request.url.host, sizeof(args->request.url.host));
+    header_len = 0;
+    for (size_t n = rio_readlineb(&rio, buf, sizeof(buf)); n > 0; n = rio_readlineb(&rio, buf, sizeof(buf))) {
+        header_len += n;
+        if (header_len > MAXLINE) {
+            log_error("HEADER", "header is too large %d", header_len);
+            clienterror(args->fd, "Request Header Fields To Large", "431", "Proxy Error", "Failed to process requests");
+            return;
+        }
 
-    while (rio_readlineb(&rio, buf, sizeof(buf)) > 0) {
         if (fast_strstr(buf, "\r\n") == NULL) {
-            log_warn("HEADER", "Invalid header\n");
-            break;
+            log_error("HEADER", "there is no \\r\\n\n");
+            clienterror(args->fd, "Internal Server Error", "500", "Proxy Error", "Failed to process requests");
+            return;
         }
 
         if (!has_useragent && fast_strstr(buf, "User-Agent") != NULL) {
@@ -256,7 +272,7 @@ static void handle_request(void* targs) {
 
         if (!has_hosthdr && fast_strstr(buf, "Host") != NULL) {
             if (host_len == 0) {
-                log_warn("WARN", "relative path received\n");
+                log_warn("WARN", "received relative path request\n");
                 log_warn("WARN", "forward to default host\n");
                 strncatf(args->request.header, sizeof(args->request.header),
                          "Host: http://%s:%s", args->ctx->default_host,
@@ -331,7 +347,7 @@ static void handle_request(void* targs) {
 
     strncpy(args->raw_url, url_buf, sizeof(args->raw_url));
     if (need_update_cache) {
-    handle_request__(args);
+        handle_request__(args);
     } else {
         handle_request_cache__(args, found->content, found->size);
         return;
@@ -382,7 +398,10 @@ static void handle_request__(targs_t* args) {
     while ((n = rio_readlineb(&rio, read_buf, sizeof(read_buf))) != 0) {
         if (rio_writen(args->fd, read_buf, n) != n) {
             log_error("ERROR", "Failed to response to the client\n");
-            Close(server_fd);
+            if (close(server_fd) != 0) {
+                log_error("ERROR", "Failed to close server_fd %d\n", server_fd);
+                return;
+            }
             return;
         }
         total_len += n;
@@ -396,7 +415,11 @@ static void handle_request__(targs_t* args) {
         add_head(http_cache, create_cacheline(args->raw_url, cache_buf));
         pthread_mutex_unlock(&mutex);
     }
-    Close(server_fd);
+
+    if (close(server_fd) != 0) {
+        log_error("ERROR", "Failed to close server_fd %d\n", server_fd);
+        return;
+    }
     log_success("SUCCESS", "Send response successfully\n");
 }
 
@@ -411,15 +434,15 @@ static result_t parse_url(const char* url, URL* parsedURL) {
 
     // Parse proto
     if (fast_strstr(url_copy, "://") != NULL) {
-    token = strtok_r(url_copy, ":", &rest);
-    if (token != NULL && rest != NULL && *rest != '\0') {
-        size_t len = MIN(strlen(token), sizeof(parsedURL->proto) - 1);
-        strncpy(parsedURL->proto, token, len);
-    }
+        token = strtok_r(url_copy, ":", &rest);
+        if (token != NULL && rest != NULL && *rest != '\0') {
+            size_t len = MIN(strlen(token), sizeof(parsedURL->proto) - 1);
+            strncpy(parsedURL->proto, token, len);
+        }
     } else {
         rest = url_copy;
         no_proto = true;
-        }
+    }
 
     // parse relative path
     if (no_proto && rest != NULL && rest[0] == '/') {
@@ -427,21 +450,21 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         strncpy(parsedURL->path, rest, len);
     } else {
         // Parse host
-    token = strtok_r(rest, "/", &rest);
-    if (token != NULL) {
-        size_t len = MIN(strlen(token), sizeof(parsedURL->host) - 1);
-        strncpy(parsedURL->host, token, len);
-    }
+        token = strtok_r(rest, "/", &rest);
+        if (token != NULL) {
+            size_t len = MIN(strlen(token), sizeof(parsedURL->host) - 1);
+            strncpy(parsedURL->host, token, len);
+        }
 
         // Parse path
-    if (rest != NULL) {
-        size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
-        if (rest[0] != '/') {
+        if (rest != NULL) {
+            size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
+            if (rest[0] != '/') {
+                strncpy(parsedURL->path, "/", 2);
+            }
+            strncat(parsedURL->path, rest, len);
+        } else {
             strncpy(parsedURL->path, "/", 2);
-        }
-        strncat(parsedURL->path, rest, len);
-    } else {
-        strncpy(parsedURL->path, "/", 2);
         }
     }
 
@@ -476,7 +499,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
 
         char* pos = strchr(parsedURL->host, ':');
         if (pos != NULL) {
-        *pos = '\0';
+            *pos = '\0';
         }
         free(host_copy);
     }
@@ -488,8 +511,8 @@ static result_t parse_url(const char* url, URL* parsedURL) {
     }
 
     if (!no_proto) {
-    result.has_data = (result.data != NULL);
-    free(url_copy);
+        result.has_data = (result.data != NULL);
+        free(url_copy);
         return result;
     }
 
