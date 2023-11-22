@@ -19,4 +19,3 @@ void sigpipe_handler(int signal);
 void handle_get(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs, http_method_t method);
 void handle_head(int fd, rio_t *rio, char *uri, char *filename, char *cgiargs);
 void rio_writen__(int fd, char *buf, size_t n);
-int endsWith(const char *str, const char *suffix);

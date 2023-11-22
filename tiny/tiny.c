@@ -120,14 +120,10 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
 }
 
 void read_requesthdrs(rio_t *rp) {
-    char buf[MAXLINE];
-    if (!endsWith(rp->rio_buf, "\r\n\r\n")) {
-        printf("invlid header!\n");
-        return;
-    }
+    char buf[MAXLINE] = {0};
 
     Rio_readlineb(rp, buf, MAXLINE);
-    while (strcmp(buf, "\r\n")) {
+    while (strcmp(buf, "\r\n") && buf[0] != '\0') {
         Rio_readlineb(rp, buf, MAXLINE);
         printf("%s", buf);
     }
@@ -263,15 +259,4 @@ void rio_writen__(int fd, char *buf, size_t n) {
     }
 
     unix_error("rio_writen error");
-}
-
-int endsWith(const char *str, const char *suffix) {
-    size_t str_len = strlen(str);
-    size_t suffix_len = strlen(suffix);
-
-    if (str_len < suffix_len) {
-        return 0;
-    }
-
-    return strncmp(str + (str_len - suffix_len), suffix, suffix_len) == 0;
 }
