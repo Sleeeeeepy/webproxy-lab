@@ -123,8 +123,11 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
     }
 
     while (true) {
-        int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, 500);
+        int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (num_events == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
             log_error("ERROR", "An error in epoll_wait\n");
             exit(1);
         }
