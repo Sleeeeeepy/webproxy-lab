@@ -106,6 +106,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
 
     listen_fd = Open_listenfd(proxy_port);
     log_info("INFO", "The proxy server is listening on port %s\n", proxy_port);
+
     epoll_fd = epoll_create1(0);
     ctx->epoll_fd = epoll_fd;
     ctx->events = events;
@@ -153,7 +154,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
 
                 Getnameinfo((struct sockaddr*)&client_addr, client_len, host, sizeof(host), port,
                             sizeof(host), 0);
-                log_info("CONN", "%s:%s\n", host, port);
+                log_info("CONNECT", "%s:%s\n", host, port);
             } else {
                 client_fd = events[i].data.fd;
                 threaded_request(client_fd, ctx);
@@ -161,7 +162,7 @@ static void start_proxy(char* proxy_port, context_t* ctx) {
         }
     }
 
-    Close(listen_fd);
+    close(listen_fd);
     return;
 }
 
@@ -170,7 +171,7 @@ static void sync_request(int fd, const context_t* ctx) {
     targs_t* args = calloc(1, sizeof(targs_t));
     args->ctx = ctx;
     args->fd = fd;
-    thread_start(args);
+    process_request(args);
 }
 
 static void threaded_request(int fd, const context_t* ctx) {
@@ -178,30 +179,24 @@ static void threaded_request(int fd, const context_t* ctx) {
     targs_t* thread_args = calloc(1, sizeof(targs_t));
     thread_args->ctx = ctx;
     thread_args->fd = fd;
-    if (pthread_create(&tid, NULL, (void* (*)(void*))thread_start, (void*)thread_args) != 0) {
+    if (pthread_create(&tid, NULL, process_request, (void*)thread_args) != 0) {
         log_error("ERROR", "Failed to create new thread\n");
         free(thread_args);
         return;
     }
 }
 
-static void thread_start(void* targs) {
+static void process_request(void* targs) {
     targs_t* args = (targs_t*)targs;
+    bool error = false;
     if (pthread_detach(pthread_self()) < 0) {
-        log_error("ERROR", "Failed to set detach mode\n");
-        if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
-            log_error("ERROR", "Failed to remove client to epoll\n");
-        }
-
-        if (close(args->fd) != 0) {
-            log_error("ERROR", "Failed to close fd %d\n", args->fd);
-        }
-
-        free(targs);
-        pthread_exit("error");
+        error = true;
+        goto PTHREAD_DETACH_ERROR;
     }
+
     handle_request(targs);
 
+PTHREAD_DETACH_ERROR:
     if (epoll_ctl(args->ctx->epoll_fd, EPOLL_CTL_DEL, args->fd, NULL) == -1) {
         log_error("ERROR", "Failed to remove client to epoll\n");
     }
@@ -209,7 +204,12 @@ static void thread_start(void* targs) {
     if (close(args->fd) != 0) {
         log_error("ERROR", "Failed to close fd %d\n", args->fd);
     }
+
     free(targs);
+
+    if (error) {
+        pthread_exit(NULL);
+    }
 }
 
 static void handle_request(void* targs) {
@@ -265,13 +265,13 @@ static void handle_request(void* targs) {
 
         if (!has_hosthdr && fast_strstr(buf, "Host") != NULL) {
             if (host_len == 0) {
-                log_warn("WARN", "received relative path request\n");
+                log_warn("WARN", "this proxy received relative path request\n");
                 log_warn("WARN", "forward to default host\n");
                 strncatf(args->request.header, sizeof(args->request.header), "Host: http://%s:%s",
                          args->ctx->default_host, args->ctx->default_port);
                 strcpy(args->request.url.proto, "http");
                 strcpy(args->request.url.host, "localhost");
-                args->request.url.port = 8081;
+                args->request.url.port = atoi(args->ctx->default_port);
                 continue;
             }
             strncatf(args->request.header, sizeof(args->request.header), "Host: %s\r\n",

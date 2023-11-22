@@ -41,7 +41,7 @@ typedef struct {
 } targs_t;
 
 void print_usage(char* program);
-static void thread_start(void* targs);
+static void process_request(void* targs);
 static void sync_request(int fd, const context_t* ctx);
 static void threaded_request(int fd, const context_t* ctx);
 static void start_proxy(char* port, context_t* ctx);
