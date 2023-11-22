@@ -393,41 +393,38 @@ static void handle_request__(targs_t* args) {
 
 static result_t parse_url(const char* url, URL* parsedURL) {
     char *token, *rest;
+    bool no_proto = false;
     memset(parsedURL, 0x00, sizeof(*parsedURL));
     result_t result;
-
     result.succ = true;
     result.data = NULL;
-
     char* url_copy = strdup(url);
 
+    // Parse proto
+    if (fast_strstr(url_copy, "://") != NULL) {
     token = strtok_r(url_copy, ":", &rest);
     if (token != NULL && rest != NULL && *rest != '\0') {
         size_t len = MIN(strlen(token), sizeof(parsedURL->proto) - 1);
         strncpy(parsedURL->proto, token, len);
     }
-
-    if ((rest != NULL && *rest == '\0') || rest == NULL) {
-        if (strlen(parsedURL->proto) == 0) {
-            strcpy(parsedURL, "http");
+    } else {
+        rest = url_copy;
+        no_proto = true;
         }
-        if (fast_strstr(parsedURL->path, "../") != NULL ||
-            fast_strstr(parsedURL->path, "//") != NULL) {
-            result.succ = false;
-            return result;
-        }
-        size_t len = MIN(strlen(token), sizeof(parsedURL->path) - 1);
-        strncpy(parsedURL->path, token, len);
-        result.has_data = false;
-        return result;
-    }
 
+    // parse relative path
+    if (no_proto && rest != NULL && rest[0] == '/') {
+        size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
+        strncpy(parsedURL->path, rest, len);
+    } else {
+        // Parse host
     token = strtok_r(rest, "/", &rest);
     if (token != NULL) {
         size_t len = MIN(strlen(token), sizeof(parsedURL->host) - 1);
         strncpy(parsedURL->host, token, len);
     }
 
+        // Parse path
     if (rest != NULL) {
         size_t len = MIN(strlen(rest), sizeof(parsedURL->path) - 1);
         if (rest[0] != '/') {
@@ -436,11 +433,13 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         strncat(parsedURL->path, rest, len);
     } else {
         strncpy(parsedURL->path, "/", 2);
+        }
     }
 
     // Parse port
+    // Remove invalid port
     size_t host_len = strlen(parsedURL->host);
-    if (parsedURL->host[host_len - 1] == ':') {
+    if (host_len > 0 && parsedURL->host[host_len - 1] == ':') {
         parsedURL->host[host_len - 1] = '\0';
     }
 
@@ -454,6 +453,7 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         }
     }
 
+    // Can't parse ipv6
     if (cnt > 1) {
         result.succ = false;
     } else {
@@ -466,7 +466,9 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         }
 
         char* pos = strchr(parsedURL->host, ':');
+        if (pos != NULL) {
         *pos = '\0';
+        }
         free(host_copy);
     }
 
@@ -476,8 +478,25 @@ static result_t parse_url(const char* url, URL* parsedURL) {
         result.succ = false;
     }
 
+    if (!no_proto) {
     result.has_data = (result.data != NULL);
     free(url_copy);
+        return result;
+    }
+
+    // if there is no proto, decide proto using known port number
+    switch (parsedURL->port) {
+        case 0:
+        case 80:
+            strcpy(parsedURL->proto, "http");
+            break;
+        case 443:
+            strcpy(parsedURL->proto, "https");
+            break;
+        default:
+            result.succ = false;
+            break;
+    }
 
     return result;
 }
