@@ -250,7 +250,7 @@ void sigchld_handler(int signal) {
 }
 
 void sigpipe_handler(int signal) {
-    fprintf(stderr, "EPIE error ocurred.\n");
+    fprintf(stderr, "EPIPE error ocurred.\n");
 }
 
 void rio_writen__(int fd, char *buf, size_t n) {
